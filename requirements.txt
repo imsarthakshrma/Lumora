@@ -1,0 +1,11 @@
+langchain
+wikipedia
+langchain-community
+langchain-openai
+python-dotenv
+pydantic
+duckduckgo-search
+crawl4ai
+neo4j
+langgraph
+python-dotenv
