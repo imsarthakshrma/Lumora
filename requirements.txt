@@ -15,7 +15,6 @@ imaplib2
 email-validator
 colorama
 tqdm
-asyncio
 aiofiles
 aiosmtplib
 python-dateutil

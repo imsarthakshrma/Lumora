@@ -23,14 +23,14 @@ class AsyncKnowledgeGraph:
             uri, auth=(user, password)
         )
 
-    def _validate_label(label: str) -> None:
+    def _validate_label(self, label: str) -> None:
         # Only allow ASCII letters, digits and underscores, and must start with a letter
         if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', label):
             raise ValueError(f"Invalid entity type: {label}")
     
     async def create_entity(self, entity_type: str, properties: Dict[str, Any]):
         """Create a new entity node in the knowledge graph"""
-        _validate_label(entity_type)
+        self._validate_label(entity_type)
         async with self.driver.session() as session:
             # convert properties to cypher parameters
             props_string = ", ".join([f"{k}: ${k}" for k in properties.keys()])
@@ -45,8 +45,10 @@ class AsyncKnowledgeGraph:
     
     async def get_entity(self, entity_type: str, properties: Dict[str, Any]):
         """Get an entity from the knowledge graph"""
-        _validate_label(entity_type)
+        self._validate_label(entity_type)
         async with self.driver.session() as session:
+            if not properties:
+                raise ValueError("Properties cannot be empty for entity matching")
             # build match clause
             props_str = " AND ".join([f"e.{k} = ${k}" for k in properties])
             # query to find the entity
@@ -64,8 +66,8 @@ class AsyncKnowledgeGraph:
                            rel_type: str, to_type: str, to_props: Dict[str, Any], 
                            rel_props: Dict[str, Any] = None):
         """Create a relationship between two entities"""
-        _validate_label(from_type)
-        _validate_label(to_type)
+        self._validate_label(from_type)
+        self._validate_label(to_type)
         async with self.driver.session() as session:
             # build match clauses for the entities
             from_props_str = " AND ".join([f"a.{k} = ${k}" for k in from_props])
@@ -103,7 +105,7 @@ class AsyncKnowledgeGraph:
     
     async def get_related_entities(self, entity_type: str, properties: Dict[str, Any], depth: int = 1):
         """Get entities related to a specific entity up to a certain depth"""
-        _validate_label(entity_type)
+        self._validate_label(entity_type)
         async with self.driver.session() as session:
             # build match clause
             props_str = " AND ".join([f"e.{k} = ${k}" for k in properties])
@@ -224,7 +226,7 @@ class AsyncKnowledgeGraphAgent:
     async def extract_entities_from_task(self, task: Dict[str, Any]):
         """Extract entities and relationships from a task using system and user prompts"""
         
-        system_prompt = PromptTemplate.from_template("""You are Dela's knowledge graph extraction engine. Your role is to analyze user tasks and extract structured information for workflow automation.
+        system_prompt = """You are Dela's knowledge graph extraction engine. Your role is to analyze user tasks and extract structured information for workflow automation.
 
         Focus on identifying workflow-relevant entities:
         - Applications/Systems (Salesforce, QuickBooks, Email clients, etc.)
@@ -237,7 +239,7 @@ class AsyncKnowledgeGraphAgent:
         Extract relationships that show workflow dependencies:
         - USES, GENERATES, TRIGGERS, DEPENDS_ON, SENDS_TO, PROCESSES
 
-        Always return valid JSON only, no additional text or explanations.""")
+        Always return valid JSON only, no additional text or explanations."""
 
         user_prompt = """Extract entities and relationships from this task for Dela's workflow automation:
 
@@ -274,7 +276,7 @@ class AsyncKnowledgeGraphAgent:
 
         # create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=system_prompt.format()),
             HumanMessage(content=user_prompt.format(task=json.dumps(task, indent=2)))
         ]
         
