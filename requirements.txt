@@ -7,5 +7,15 @@ pydantic
 duckduckgo-search
 crawl4ai
 neo4j
-langgraph
-python-dotenv
+
+pymilvus
+rich
+typer
+imaplib2
+email-validator
+colorama
+tqdm
+asyncio
+aiofiles
+aiosmtplib
+python-dateutil

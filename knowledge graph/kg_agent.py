@@ -8,6 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain.tools import Tool
 import neo4j
 from typing import List, Dict, Any
+import re
 # import os
 
 
@@ -21,9 +22,15 @@ class AsyncKnowledgeGraph:
         self.driver = neo4j.AsyncGraphDatabase.driver(
             uri, auth=(user, password)
         )
+
+    def _validate_label(label: str) -> None:
+        # Only allow ASCII letters, digits and underscores, and must start with a letter
+        if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', label):
+            raise ValueError(f"Invalid entity type: {label}")
     
     async def create_entity(self, entity_type: str, properties: Dict[str, Any]):
         """Create a new entity node in the knowledge graph"""
+        _validate_label(entity_type)
         async with self.driver.session() as session:
             # convert properties to cypher parameters
             props_string = ", ".join([f"{k}: ${k}" for k in properties.keys()])
@@ -38,10 +45,10 @@ class AsyncKnowledgeGraph:
     
     async def get_entity(self, entity_type: str, properties: Dict[str, Any]):
         """Get an entity from the knowledge graph"""
+        _validate_label(entity_type)
         async with self.driver.session() as session:
             # build match clause
-            props_str = " AND ".join([f"e.{k} = ${k}" for k in properties.keys()])
-            
+            props_str = " AND ".join([f"e.{k} = ${k}" for k in properties])
             # query to find the entity
             query = f"""
             MATCH (e:{entity_type})
@@ -57,20 +64,23 @@ class AsyncKnowledgeGraph:
                            rel_type: str, to_type: str, to_props: Dict[str, Any], 
                            rel_props: Dict[str, Any] = None):
         """Create a relationship between two entities"""
+        _validate_label(from_type)
+        _validate_label(to_type)
         async with self.driver.session() as session:
             # build match clauses for the entities
-            from_props_str = " AND ".join([f"a.{k} = ${k}" for k in from_props.keys()])
-            to_props_str = " AND ".join([f"b.{k} = ${k}" for k in to_props.keys()])
+            from_props_str = " AND ".join([f"a.{k} = ${k}" for k in from_props])
+            to_props_str = " AND ".join([f"b.{k} = ${k}" for k in to_props])
             
             # build properties for the relationship
             rel_props_str = ""
             if rel_props:
-                rel_props_str = " {" + ", ".join([f"{k}: ${k}" for k in rel_props.keys()]) + "}"
+                rel_props_str = " {" + ", ".join([f"{k}: ${k}" for k in rel_props]) + "}"
             
             # combine all parameters
-            params = {**from_props, **to_props}
+            params = {f"from_{k}": v for k, v in from_props.items()}
+            params.update({f"to_{k}": v for k, v in to_props.items()})
             if rel_props:
-                params.update(rel_props)
+                params.update({f"rel_{k}": v for k, v in rel_props.items()})
             
             # create the relationship
             query = f"""
@@ -93,9 +103,10 @@ class AsyncKnowledgeGraph:
     
     async def get_related_entities(self, entity_type: str, properties: Dict[str, Any], depth: int = 1):
         """Get entities related to a specific entity up to a certain depth"""
+        _validate_label(entity_type)
         async with self.driver.session() as session:
             # build match clause
-            props_str = " AND ".join([f"e.{k} = ${k}" for k in properties.keys()])
+            props_str = " AND ".join([f"e.{k} = ${k}" for k in properties])
             
             # query to find related entities
             query = f"""
@@ -145,7 +156,7 @@ class AsyncKnowledgeGraphAgent:
         # Create the agent executor
         self.agent = self._create_agent()
     
-    def _create_tools(self):
+    async def _create_tools(self):
         """Create tools for the KG Agent to use"""
         # Create async tool wrappers
         async def create_entity_wrapper(entity_type, properties):
@@ -184,10 +195,10 @@ class AsyncKnowledgeGraphAgent:
         ]
         return tools
     
-    def _create_agent(self):
+    async def _create_agent(self):
         """Create the agent executor"""
-        system_message = SystemMessage(
-            content="""You are GAZIE's Knowledge Graph Agent that automatically builds and maintains a knowledge graph.
+        system_message = PromptTemplate.from_template(
+            content="""You are Dela's Knowledge Graph Agent that automatically builds and maintains a knowledge graph.
             Your job is to:
             1. Identify entities and relationships from user tasks and activities
             2. Create and update the knowledge graph accordingly
@@ -213,7 +224,7 @@ class AsyncKnowledgeGraphAgent:
     async def extract_entities_from_task(self, task: Dict[str, Any]):
         """Extract entities and relationships from a task using system and user prompts"""
         
-        system_prompt = PromptTemplate.from_template("""You are GAZIE's knowledge graph extraction engine. Your role is to analyze user tasks and extract structured information for workflow automation.
+        system_prompt = PromptTemplate.from_template("""You are Dela's knowledge graph extraction engine. Your role is to analyze user tasks and extract structured information for workflow automation.
 
         Focus on identifying workflow-relevant entities:
         - Applications/Systems (Salesforce, QuickBooks, Email clients, etc.)
@@ -228,7 +239,7 @@ class AsyncKnowledgeGraphAgent:
 
         Always return valid JSON only, no additional text or explanations.""")
 
-        user_prompt = PromptTemplate.from_template("""Extract entities and relationships from this task for GAZIE's workflow automation:
+        user_prompt = """Extract entities and relationships from this task for Dela's workflow automation:
 
         Task: {json.dumps(task, indent=2)}
 
@@ -259,12 +270,12 @@ class AsyncKnowledgeGraphAgent:
                     }}
                 }}
             ]
-        }}""")
+        }}"""
 
         # create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt.format()),
-            HumanMessage(content=user_prompt.format())
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt.format(task=json.dumps(task, indent=2)))
         ]
         
         response = await self.llm.ainvoke(messages)
@@ -281,16 +292,27 @@ class AsyncKnowledgeGraphAgent:
     async def process_task(self, task: Dict[str, Any]):
         """Process a task to extract entities and relationships for the knowledge graph"""
         # extract entities and relationships
+        if not task:
+            raise ValueError("Task cannot be empty")
+        
+        errors = []
+        
+        # Extract entities and relationships
         extraction = await self.extract_entities_from_task(task)
         
-        # create entities
+        # Create entities
         created_entities = []
         for entity in extraction.get("entities", []):
             try:
+                # Validate entity structure
+                if "type" not in entity or "properties" not in entity:
+                    errors.append(f"Invalid entity structure: {entity}")
+                    continue
+                    
                 result = await self.kg.create_entity(entity["type"], entity["properties"])
                 created_entities.append(result)
             except Exception as e:
-                print(f"Error creating entity: {e}")
+                errors.append(f"Error creating entity {entity}: {str(e)}")
         
         # create relationships
         created_relationships = []
@@ -304,11 +326,12 @@ class AsyncKnowledgeGraphAgent:
                 )
                 created_relationships.append(result)
             except Exception as e:
-                print(f"Error creating relationship: {e}")
+                errors.append(f"Error creating relationship {rel}: {str(e)}")
         
         return {
             "created_entities": created_entities,
-            "created_relationships": created_relationships
+            "created_relationships": created_relationships,
+            "errors": errors
         }
     
     async def learn_from_tasks(self, tasks: List[Dict[str, Any]]):
@@ -321,6 +344,8 @@ class AsyncKnowledgeGraphAgent:
     
     async def answer_question(self, question: str):
         """Answer a question using the knowledge graph"""
-        # use the agent to answer the question
-        result = await self.agent.ainvoke({"input": question})
-        return result
+        try:
+            result = await self.agent.ainvoke({"input": question})
+            return result
+        except Exception as e:
+            return {"error": f"Failed to answer question: {str(e)}"}
