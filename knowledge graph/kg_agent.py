@@ -70,13 +70,13 @@ class AsyncKnowledgeGraph:
         self._validate_label(to_type)
         async with self.driver.session() as session:
             # build match clauses for the entities
-            from_props_str = " AND ".join([f"a.{k} = ${k}" for k in from_props])
-            to_props_str = " AND ".join([f"b.{k} = ${k}" for k in to_props])
+            from_props_str = " AND ".join([f"a.{k} = $from_{k}" for k in from_props])
+            to_props_str = " AND ".join([f"b.{k} = $to_{k}" for k in to_props])
             
             # build properties for the relationship
             rel_props_str = ""
             if rel_props:
-                rel_props_str = " {" + ", ".join([f"{k}: ${k}" for k in rel_props]) + "}"
+                rel_props_str = " {" + ", ".join([f"{k}: $rel_{k}" for k in rel_props]) + "}"
             
             # combine all parameters
             params = {f"from_{k}": v for k, v in from_props.items()}
@@ -108,7 +108,7 @@ class AsyncKnowledgeGraph:
         self._validate_label(entity_type)
         async with self.driver.session() as session:
             # build match clause
-            props_str = " AND ".join([f"e.{k} = ${k}" for k in properties])
+            props_str = " AND ".join([f"e.{k} = ${entity_type}_{k}" for k in properties])
             
             # query to find related entities
             query = f"""
@@ -197,31 +197,24 @@ class AsyncKnowledgeGraphAgent:
         ]
         return tools
     
-    async def _create_agent(self):
+    def _create_agent(self):
         """Create the agent executor"""
-        system_message = PromptTemplate.from_template(
-            content="""You are Dela's Knowledge Graph Agent that automatically builds and maintains a knowledge graph.
-            Your job is to:
-            1. Identify entities and relationships from user tasks and activities
-            2. Create and update the knowledge graph accordingly
-            3. Learn domain-specific patterns over time
-            4. Ensure the knowledge graph is accurate and up-to-date
-            
-            When processing new information, first check if related entities already exist,
-            then update or create new nodes and relationships as needed.
-            """
-        )
+        from langchain.agents import create_openai_functions_agent
+        from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
         
-        # Create the agent executor
-        agent = AgentExecutor.from_agent_and_tools(
-            agent=AgentType.OPENAI_FUNCTIONS,
-            tools=self.tools,
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_message),
+            ("user", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])  
+        
+        agent = create_openai_functions_agent(
             llm=self.llm,
-            system_message=system_message,
-            verbose=True
+            tools=self.tools,
+            prompt=prompt
         )
         
-        return agent
+        return AgentExecutor(agent=agent, tools=self.tools, verbose=True)
     
     async def extract_entities_from_task(self, task: Dict[str, Any]):
         """Extract entities and relationships from a task using system and user prompts"""

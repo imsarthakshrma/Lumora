@@ -24,10 +24,10 @@ class EmailProcessor:
     
     async def parse_email(self, raw_email: str) -> Dict[str, Any]:
         """Parse a raw email string into structured data"""
-        # Parse the email using the email module
+        # parse the email using the email module
         msg = email.message_from_string(raw_email)
         
-        # Extract basic email metadata
+        # extract basic email metadata
         email_data = {
             "subject": msg.get("Subject", ""),
             "from": msg.get("From", ""),
@@ -61,7 +61,7 @@ class EmailProcessor:
     async def categorize_email(self, email_data: Dict[str, Any]) -> str:
         """Categorize an email based on its content (simple rule-based approach)"""
         subject = email_data["subject"].lower()
-        body = email_data["body"].lower()
+        # body = email_data["body"].lower()
         
         # simple rule-based categorization
         if any(word in subject for word in ["invoice", "payment", "bill"]):
@@ -142,7 +142,7 @@ class AsyncEmailAgent:
 
         Always return valid JSON only, no additional text or explanations."""
 
-        user_prompt = PromptTemplate.from_template("""Extract entities and relationships from this email for Dela's workflow automation:
+        user_prompt = """Extract entities and relationships from this email for Dela's workflow automation:
 
         Email: {email_json}
 
@@ -173,11 +173,11 @@ class AsyncEmailAgent:
                     }}
                 }}
             ]
-        }}""")
+        }}"""
 
         # create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt.format()),
+            SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt.format(email_json=json.dumps(email_data, indent=2)))
         ]
         
@@ -188,7 +188,7 @@ class AsyncEmailAgent:
             extraction = json.loads(response.content)
             return extraction
         except json.JSONDecodeError as e:
-            print(f"JSON parsing error: {e}")
+            logger.error(f"JSON parsing error: {e}", exc_info=True)
             # Fallback if JSON parsing fails
             return {"entities": [], "relationships": []}
     
@@ -223,7 +223,7 @@ class AsyncEmailAgent:
         
         # create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt.format()),
+            SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt.format(
                 email_json=json.dumps(email_data, indent=2),
                 user_context=json.dumps(user_context or {}, indent=2)
@@ -237,7 +237,7 @@ class AsyncEmailAgent:
             reply_data = json.loads(response.content)
             return reply_data
         except json.JSONDecodeError as e:
-            print(f"JSON parsing error: {e}")
+            logger.error(f"JSON parsing error: {e}", exc_info=True)
             # fallback if JSON parsing fails
             return {
                 "subject": f"Re: {email_data.get('subject', '')}",

@@ -68,9 +68,9 @@ class GmailMonitor:
             if email_id in self.processed_emails:
                 continue
             
-            emails_data = await self._fetch_emails(email_id)
-            if emails_data:
-                emails.append(emails_data)
+            email_data = await self._fetch_email(email_id)
+            if email_data:
+                emails.append(email_data)
                 self.processed_emails.add(email_id.decode())
         
         return emails
@@ -108,7 +108,7 @@ class GmailMonitor:
             if msg.is_multipart():
                 for part in msg.walk():
                     content_type = part.get_content_type()
-                    content_disposition = part.get_content_disposition()          
+                    content_disposition = part.get_content_disposition() or ""
 
                     # extract the content
                     if content_type == "text/plain" and "attachment" not in content_disposition:
@@ -233,7 +233,7 @@ class GmailMonitor:
                 await self.disconnect()
                 
             except Exception as e:
-                print(f"Error monitoring inbox: {e}")
+                logger.error(f"Error monitoring inbox: {e}", exc_info=True)
             
             # wait for the next check
             await asyncio.sleep(interval)
