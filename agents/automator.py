@@ -1,4 +1,5 @@
 import json
+import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
@@ -102,7 +103,15 @@ Generate a reply that matches the user's style and addresses all points in the o
                 if json_match:
                     content = json_match.group(1)
                 
-                reply_data = json.loads(content)
+                try:
+                    reply_data = self._extract_json_from_llm_response(response.content)
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"Error extracting JSON from LLM response: {e}", exc_info=True)
+                    reply_data = {
+                        "subject": f"Re: {email_data.get('subject', '')}",
+                        "body": "I'll get back to you soon.",
+                        "summary": "Generic reply"
+                    }
             else:
                 reply_data = {
                     "subject": f"Re: {email_data.get('subject', '')}",
@@ -127,12 +136,12 @@ Generate a reply that matches the user's style and addresses all points in the o
             return reply_data
             
         except Exception as e:
-            print(f"Error generating email reply: {e}")
+            logger.error(f"Error generating email reply: {e}", exc_info=True)
             return {
                 "subject": f"Re: {email_data.get('subject', '')}",
                 "body": "I'll get back to you soon.",
                 "summary": "Error generating reply",
-                "error": str(e)
+                "error": "An error occurred while generating the reply."
             }
     
     def _format_email_reply(self, to: str, from_addr: str, subject: str, body: str) -> MIMEMultipart:
@@ -285,10 +294,10 @@ Return a JSON object indicating whether the invoice is valid and any reasons for
             return validation_result
             
         except Exception as e:
-            print(f"Error validating invoice: {e}")
+            logger.error(f"Error validating invoice: {e}", exc_info=True)
             return {
                 "valid": False,
-                "reasons": [f"Error validating invoice: {str(e)}"],
+                "reasons": ["An error occurred while validating the invoice"],
                 "confidence": 0.0
             }
     
@@ -337,8 +346,8 @@ Generate a reply that confirms receipt and approval of the invoice."""
 
         # Create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt.format()),
-            HumanMessage(content=user_prompt.format(email_json=json.dumps(email_data, indent=2)))
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
         ]
         
         # Get response from LLM
@@ -350,11 +359,34 @@ Generate a reply that confirms receipt and approval of the invoice."""
             if isinstance(content, str):
                 import re
                 # Find JSON content (in case there's additional text)
-                json_match = re.search(r'({.*})', content.replace('\n', ' '), re.DOTALL)
-                if json_match:
-                    content = json_match.group(1)
-                
-                reply_data = json.loads(content)
+                start = content.find('{')
+                if start != -1:
+                    brace_count = 0
+                    end = start
+                    for i in range(start, len(content)):
+                        if content[i] == '{':
+                            brace_count += 1
+                        elif content[i] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end = i + 1
+                                break
+                    if brace_count == 0:
+                        content = content[start:end]
+                        try:
+                            reply_data = json.loads(content)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Error parsing JSON from LLM response: {e}", exc_info=True)
+                            reply_data = {
+                                "subject": f"Re: {email_data.get('subject', '')} - Invoice Approved",
+                                "body": "We have received and approved your invoice for payment.",
+                                "summary": "Invoice approval notification"
+                            }
+                    else:
+                        raise ValueError("Unbalanced JSON braces")
+                else:
+                    raise ValueError("No JSON content found")
+
             else:
                 reply_data = {
                     "subject": f"Re: {email_data.get('subject', '')} - Invoice Approved",
@@ -376,12 +408,12 @@ Generate a reply that confirms receipt and approval of the invoice."""
             return reply_data
             
         except Exception as e:
-            print(f"Error generating invoice approval: {e}")
+            logger.error(f"Error generating invoice approval: {e}", exc_info=True)
             return {
                 "subject": f"Re: {email_data.get('subject', '')} - Invoice Approved",
                 "body": "We have received and approved your invoice for payment.",
                 "summary": "Error generating approval",
-                "error": str(e)
+                "error": "An error occurred while generating approval reply."
             }
     
     async def generate_invoice_rejection(self, email_data: Dict[str, Any], invoice_data: Dict[str, Any], reasons: List[str], user_profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -433,8 +465,8 @@ Generate a reply that politely explains why the invoice cannot be approved and w
 
         # create messages for the LLM   
         messages = [
-            SystemMessage(content=system_prompt.format()),
-            HumanMessage(content=user_prompt.format(email_json=json.dumps(email_data, indent=2)))
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
         ]
         
         # Get response from LLM
@@ -450,7 +482,15 @@ Generate a reply that politely explains why the invoice cannot be approved and w
                 if json_match:
                     content = json_match.group(1)
                 
-                reply_data = json.loads(content)
+                try:
+                    reply_data = json.loads(content)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error parsing JSON from LLM response: {e}", exc_info=True)
+                    reply_data = {
+                        "subject": f"Re: {email_data.get('subject', '')} - Invoice Requires Attention",
+                        "body": "We have received your invoice but cannot approve it at this time.",
+                        "summary": "Invoice rejection notification"
+                    }
             else:
                 reply_data = {
                     "subject": f"Re: {email_data.get('subject', '')} - Invoice Requires Attention",
@@ -472,10 +512,52 @@ Generate a reply that politely explains why the invoice cannot be approved and w
             return reply_data
             
         except Exception as e:
-            print(f"Error generating invoice rejection: {e}")
+            logger.error(f"Error generating invoice rejection: {e}", exc_info=True)
             return {
                 "subject": f"Re: {email_data.get('subject', '')} - Invoice Requires Attention",
                 "body": "We have received your invoice but cannot approve it at this time.",
                 "summary": "Error generating rejection",
-                "error": str(e)
+                "error": "An error occurred while generating rejection reply."
             }
+    
+    def _extract_json_from_llm_response(self, response_content: str) -> Dict[str, Any]:
+        """
+        Extract JSON from LLM response content.
+        
+        Args:
+            response_content: Raw response content from LLM
+            
+        Returns:
+            Parsed JSON as dictionary
+            
+        Raises:
+            json.JSONDecodeError: If JSON parsing fails
+            ValueError: If no valid JSON found
+        """
+        # try direct JSON parsing first
+        try:
+            return json.loads(response_content)
+        except json.JSONDecodeError:
+            pass
+    
+        # try to find JSON by looking for balanced braces
+        start = response_content.find('{')
+        if start == -1:
+            raise ValueError("No JSON object found in response")
+    
+        brace_count = 0
+        end = start
+        for i in range(start, len(response_content)):
+            if response_content[i] == '{':
+                brace_count += 1
+            elif response_content[i] == '}':
+                brace_count -= 1
+            if brace_count == 0:
+                end = i + 1
+                break
+    
+            if brace_count != 0:
+                raise ValueError("Unbalanced JSON braces in response")
+    
+            json_str = response_content[start:end]
+            return json.loads(json_str)

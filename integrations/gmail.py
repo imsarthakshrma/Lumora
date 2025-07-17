@@ -205,6 +205,45 @@ class GmailMonitor:
         """Mark an email as read"""
         await asyncio.to_thread(self.mail.store, email_id, "+FLAGS", "\\Seen")
     
+    async def send_email(self, to_email: str, subject: str, body: str) -> bool:
+        """
+        Send an email using SMTP
+        
+        Args:
+            to_email: Recipient email address
+            subject: Email subject
+            body: Email body text
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        try:
+            # Create message
+            message = MIMEMultipart()
+            message["From"] = self.email_address
+            message["To"] = to_email
+            message["Subject"] = subject
+            
+            # Add body
+            message.attach(MIMEText(body, "plain"))
+            
+            # Connect to SMTP server
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()
+                server.login(self.email_address, self.password)
+                server.send_message(message)
+                
+            print(f"Email sent: {subject}")
+            return True
+            
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            return False
+    
     async def monitor_inbox(self, callback, interval: int = 60, folder: str = "INBOX") -> None:
         """
         Monitor the inbox for new emails at regular intervals

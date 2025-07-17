@@ -194,7 +194,7 @@ class AsyncEmailAgent:
     
     async def generate_reply(self, email_data: Dict[str, Any], user_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Generate an appropriate reply to an email"""
-        system_prompt = PromptTemplate.from_template("""You are Dela's email assistant. Your role is to draft appropriate email replies based on the email content and user context.
+        system_prompt ="""You are Dela's email assistant. Your role is to draft appropriate email replies based on the email content and user context.
 
         Follow these guidelines:
         1. Maintain a professional, friendly tone
@@ -211,7 +211,7 @@ class AsyncEmailAgent:
             "suggested_actions": ["Action 1", "Action 2"],
             "priority": "high/medium/low",
             "follow_up_needed": true/false
-        }""")
+        }"""
 
         user_prompt = """Generate an email reply for the following email:
 

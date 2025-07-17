@@ -2,8 +2,8 @@ import json
 import re
 from typing import Dict, Any
 # import asyncio
-from langchain.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
 from email.message import Message
 
 class Analyser:
@@ -195,7 +195,7 @@ Return a JSON object with the following structure:
                 
             return analysis_result
         except Exception as e:
-            print(f"Error parsing analysis result: {e}")
+            logging.error(f"Error parsing analysis result: {e}", exc_info=True)
             return {
                 "intent": "unknown",
                 "category": "unknown",
@@ -324,5 +324,5 @@ Return a JSON object with the following structure:
                 
             return kg_data
         except Exception as e:
-            print(f"Error parsing KG extraction result: {e}")
+            logging.error(f"Error parsing KG extraction result: {e}", exc_info=True)
             return {"entities": [], "relationships": []}

@@ -202,6 +202,16 @@ class AsyncKnowledgeGraphAgent:
         from langchain.agents import create_openai_functions_agent
         from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
         
+        system_message = """You are Dela's Knowledge Graph Agent that automatically builds and maintains a knowledge graph.
+        
+        Your capabilities:
+        - Create entities and relationships in the knowledge graph
+        - Query the graph for information
+        - Find related entities and patterns
+        - Answer questions based on the knowledge graph data
+        
+        Always be precise and structured in your responses."""
+        
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
             ("user", "{input}"),

@@ -2,8 +2,8 @@ import json
 import asyncio
 from typing import Dict, Any
 from datetime import datetime
-from langchain.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
 
 class Observer:
     """
@@ -127,7 +127,7 @@ Return a JSON object with the following structure:
         ]
         
         # Get response from LLM
-        response = asyncio.run(self.llm.invoke(messages))
+        response = await self.llm.invoke(messages)
         
         try:
             # Extract and parse JSON from response
@@ -145,7 +145,7 @@ Return a JSON object with the following structure:
                 
             return kg_data
         except Exception as e:
-            print(f"Error parsing KG extraction result: {e}")
+            logging.error(f"Error parsing KG extraction result: {e}", exc_info=True)
             return {"entities": [], "relationships": []}
     
     async def _learn_from_interaction(self, interaction: Dict[str, Any]):
@@ -236,7 +236,7 @@ Return a JSON object with the following structure:
                 await self.kg_agent.process_task(task)
             
         except Exception as e:
-            print(f"Error processing pattern analysis: {e}")
+            logging.error(f"Error processing pattern analysis: {e}", exc_info=True)
     
     async def get_user_preferences(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -258,5 +258,5 @@ Return a JSON object with the following structure:
             
             return result
         except Exception as e:
-            print(f"Error getting user preferences: {e}")
+            logging.error(f"Error getting user preferences: {e}", exc_info=True)
             return {}
