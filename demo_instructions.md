@@ -4,7 +4,8 @@
 
 1. **Gmail Account Setup**
    - You need a Gmail account for Dela to use
-   - Enable "Less secure app access" or create an App Password in your Google Account settings
+   - Create an App Password in your Google Account settings (required for 2FA-enabled accounts)
+   - Go to: https://myaccount.google.com/apppasswords
    - Add these credentials to your `.env` file:
      ```
      GMAIL_EMAIL=your.email@gmail.com

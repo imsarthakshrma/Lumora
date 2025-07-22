@@ -4,7 +4,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_core.retrievers import BaseRetriever
 from langchain.schema import Document
 from typing import List, Dict, Any
-import neo4j
+import neo4j 
 
 class GraphRAG:
     """
@@ -18,7 +18,6 @@ class GraphRAG:
         """Initialize GraphRAG with Milvus and Neo4j connections"""
         # Initialize embedding model
         self.embeddings = embedding_model or OpenAIEmbeddings()
-        self.retriever = BaseRetriever()
         
         # Initialize Milvus vector store
         self.vector_store = Milvus(
@@ -43,7 +42,7 @@ class GraphRAG:
     
     def vector_search(self, query: str, k: int = 5):
         """Perform vector similarity search"""
-        return self.vector_store.similarity_search(query, k=k, retriever=self.retriever)
+        return self.vector_store.similarity_search(query, k=k)
     
     def graph_search(self, entity_type: str, properties: Dict[str, Any], depth: int = 2):
         """Perform graph-based search starting from an entity"""
