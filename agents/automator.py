@@ -1,13 +1,17 @@
 import json
 import logging
-import asyncio
-from typing import Dict, Any, List, Optional, Callable
+import re
+# import asyncio
+from typing import Dict, Any, List
 from datetime import datetime
-from email.message import Message
+# from email.message import Message
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 class Automator:
     """
@@ -15,7 +19,7 @@ class Automator:
     This agent is responsible for generating email replies, scheduling actions,
     and automating repetitive tasks based on user preferences and knowledge graph.
     """
-    
+
     def __init__(self, observer, llm=None):
         """
         Initialize the Automator agent.
@@ -95,30 +99,8 @@ Generate a reply that matches the user's style and addresses all points in the o
         
         try:
             # Extract and parse JSON from response
-            content = response.content
-            if isinstance(content, str):
-                import re
-                # Find JSON content (in case there's additional text)
-                json_match = re.search(r'({.*})', content.replace('\n', ' '), re.DOTALL)
-                if json_match:
-                    content = json_match.group(1)
-                
-                try:
-                    reply_data = self._extract_json_from_llm_response(response.content)
-                except (json.JSONDecodeError, ValueError) as e:
-                    logger.error(f"Error extracting JSON from LLM response: {e}", exc_info=True)
-                    reply_data = {
-                        "subject": f"Re: {email_data.get('subject', '')}",
-                        "body": "I'll get back to you soon.",
-                        "summary": "Generic reply"
-                    }
-            else:
-                reply_data = {
-                    "subject": f"Re: {email_data.get('subject', '')}",
-                    "body": "I'll get back to you soon.",
-                    "summary": "Generic reply"
-                }
-                
+            reply_data = self._extract_json_from_llm_response(response.content)
+            
             # Format as email message
             reply_message = self._format_email_reply(
                 to=email_data.get("from", ""),
@@ -368,9 +350,9 @@ Generate a reply that confirms receipt and approval of the invoice."""
                             brace_count += 1
                         elif content[i] == '}':
                             brace_count -= 1
-                            if brace_count == 0:
-                                end = i + 1
-                                break
+                        if brace_count == 0:
+                            end = i + 1
+                            break
                     if brace_count == 0:
                         content = content[start:end]
                         try:
@@ -409,12 +391,29 @@ Generate a reply that confirms receipt and approval of the invoice."""
             
         except Exception as e:
             logger.error(f"Error generating invoice approval: {e}", exc_info=True)
-            return {
-                "subject": f"Re: {email_data.get('subject', '')} - Invoice Approved",
-                "body": "We have received and approved your invoice for payment.",
-                "summary": "Error generating approval",
-                "error": "An error occurred while generating approval reply."
+            
+            # Create a fallback reply
+            fallback_subject = f"Re: {email_data.get('subject', '')} - Invoice Approved"
+            fallback_body = "We have received and approved your invoice for payment."
+            
+            # Format as email message for fallback
+            fallback_message = self._format_email_reply(
+                to=email_data.get("from", ""),
+                from_addr=email_data.get("to", ""),
+                subject=fallback_subject,
+                body=fallback_body
+            )
+            
+            # Create fallback reply with message key
+            fallback_reply = {
+                "subject": fallback_subject,
+                "body": fallback_body,
+                "summary": "Invoice approval notification",
+                "error": "An error occurred while generating approval reply.",
+                "message": fallback_message
             }
+            
+            return fallback_reply
     
     async def generate_invoice_rejection(self, email_data: Dict[str, Any], invoice_data: Dict[str, Any], reasons: List[str], user_profile: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -427,7 +426,7 @@ Generate a reply that confirms receipt and approval of the invoice."""
             user_profile: Dictionary containing user profile data
             
         Returns:
-            Dictionary containing rejection reply
+            Dictionary containing rejection reply with a 'message' key
         """
         system_prompt = """You are Dela's invoice rejection reply generator. Your role is to generate appropriate rejection replies for invoices.
 
@@ -469,35 +468,21 @@ Generate a reply that politely explains why the invoice cannot be approved and w
             HumanMessage(content=user_prompt)
         ]
         
-        # Get response from LLM
-        response = await self.llm.ainvoke(messages)
-        
         try:
+            # Get response from LLM
+            response = await self.llm.ainvoke(messages)
+            
             # Extract and parse JSON from response
-            content = response.content
-            if isinstance(content, str):
-                import re
-                # Find JSON content (in case there's additional text)
-                json_match = re.search(r'({.*})', content.replace('\n', ' '), re.DOTALL)
-                if json_match:
-                    content = json_match.group(1)
-                
-                try:
-                    reply_data = json.loads(content)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Error parsing JSON from LLM response: {e}", exc_info=True)
-                    reply_data = {
-                        "subject": f"Re: {email_data.get('subject', '')} - Invoice Requires Attention",
-                        "body": "We have received your invoice but cannot approve it at this time.",
-                        "summary": "Invoice rejection notification"
-                    }
-            else:
+            try:
+                reply_data = self._extract_json_from_llm_response(response.content)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Error extracting JSON from LLM response: {e}", exc_info=True)
                 reply_data = {
                     "subject": f"Re: {email_data.get('subject', '')} - Invoice Requires Attention",
                     "body": "We have received your invoice but cannot approve it at this time.",
                     "summary": "Invoice rejection notification"
                 }
-                
+            
             # Format as email message
             reply_message = self._format_email_reply(
                 to=email_data.get("from", ""),
@@ -513,12 +498,26 @@ Generate a reply that politely explains why the invoice cannot be approved and w
             
         except Exception as e:
             logger.error(f"Error generating invoice rejection: {e}", exc_info=True)
-            return {
+            # Create a fallback reply with a message
+            fallback_reply = {
                 "subject": f"Re: {email_data.get('subject', '')} - Invoice Requires Attention",
                 "body": "We have received your invoice but cannot approve it at this time.",
-                "summary": "Error generating rejection",
+                "summary": "Invoice rejection notification",
                 "error": "An error occurred while generating rejection reply."
             }
+            
+            # Format as email message for fallback
+            fallback_message = self._format_email_reply(
+                to=email_data.get("from", ""),
+                from_addr=email_data.get("to", ""),
+                subject=fallback_reply["subject"],
+                body=fallback_reply["body"]
+            )
+            
+            # Add message to fallback reply
+            fallback_reply["message"] = fallback_message
+            
+            return fallback_reply
     
     def _extract_json_from_llm_response(self, response_content: str) -> Dict[str, Any]:
         """
@@ -539,12 +538,12 @@ Generate a reply that politely explains why the invoice cannot be approved and w
             return json.loads(response_content)
         except json.JSONDecodeError:
             pass
-    
+
         # try to find JSON by looking for balanced braces
         start = response_content.find('{')
         if start == -1:
             raise ValueError("No JSON object found in response")
-    
+
         brace_count = 0
         end = start
         for i in range(start, len(response_content)):
@@ -555,9 +554,9 @@ Generate a reply that politely explains why the invoice cannot be approved and w
             if brace_count == 0:
                 end = i + 1
                 break
-    
-            if brace_count != 0:
-                raise ValueError("Unbalanced JSON braces in response")
-    
-            json_str = response_content[start:end]
-            return json.loads(json_str)
+
+        if brace_count != 0:
+            raise ValueError("Unbalanced JSON braces in response")
+
+        json_str = response_content[start:end]
+        return json.loads(json_str)

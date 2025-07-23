@@ -35,28 +35,41 @@ class Observer:
             email_data: Dictionary containing email data and analysis
             response_data: Dictionary containing response data (if any)
         """
-        # Record interaction in history
-        interaction = {
-            "timestamp": datetime.now().isoformat(),
-            "email_data": email_data,
-            "response_data": response_data,
-        }
-        self.interaction_history.append(interaction)
-        
-        # Extract entities and relationships for knowledge graph
-        if "kg_data" not in email_data:
-            # If kg_data is not already in email_data, we need to extract it
-            # This would typically be done by the Analyser, but we handle it here as a fallback
-            kg_data = await self._extract_kg_data(email_data)
-        else:
-            kg_data = email_data["kg_data"]
-        
-        # Update knowledge graph with extracted data
-        await self.kg_agent.process_task({"email_interaction": email_data, "kg_data": kg_data})
-        
-        # Learn from interaction
-        await self._learn_from_interaction(interaction)
-        
+        try:
+            # Record interaction in history
+            interaction = {
+                "timestamp": datetime.now().isoformat(),
+                "email_data": email_data,
+                "response_data": response_data,
+            }
+            self.interaction_history.append(interaction)
+            
+            # Extract entities and relationships for knowledge graph
+            if "kg_data" not in email_data:
+                # If kg_data is not already in email_data, we need to extract it
+                # This would typically be done by the Analyser, but we handle it here as a fallback
+                kg_data = await self._extract_kg_data(email_data)
+            else:
+                kg_data = email_data["kg_data"]
+            
+            # Update knowledge graph with extracted data - wrap in try/except to prevent errors from affecting the main process
+            try:
+                await self.kg_agent.process_task({"email_interaction": email_data, "kg_data": kg_data})
+            except Exception as e:
+                logger.error(f"Error updating knowledge graph: {e}", exc_info=True)
+                # Continue processing even if knowledge graph update fails
+            
+            # Learn from interaction - wrap in try/except to prevent errors from affecting the main process
+            try:
+                await self._learn_from_interaction(interaction)
+            except Exception as e:
+                logger.error(f"Error learning from interaction: {e}", exc_info=True)
+                # Continue processing even if learning fails
+                
+        except Exception as e:
+            logger.error(f"Error observing email interaction: {e}", exc_info=True)
+            # Continue processing even if observation fails
+    
     async def _extract_kg_data(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Extract knowledge graph data from email data.
@@ -212,7 +225,7 @@ Return a JSON object with the following structure:
         ]
         
         # Get response from LLM
-        response = await self.llm.ainvoke(messages)
+        response = await self.llm.invoke(messages)
         
         try:
             # Extract and parse JSON from response

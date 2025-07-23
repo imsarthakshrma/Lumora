@@ -6,11 +6,12 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain.tools import Tool
-import neo4j
+from neo4j import AsyncGraphDatabase
 from typing import List, Dict, Any
 import re
-# import os
+import logging
 
+logger = logging.getLogger(__name__)
 
 class AsyncKnowledgeGraph:
     """
@@ -19,7 +20,7 @@ class AsyncKnowledgeGraph:
     
     def __init__(self, uri, user, password):
         """Initialize the Knowledge Graph with Neo4j connection"""
-        self.driver = neo4j.AsyncGraphDatabase.driver(
+        self.driver = AsyncGraphDatabase.driver(
             uri, auth=(user, password)
         )
 
@@ -108,7 +109,7 @@ class AsyncKnowledgeGraph:
         self._validate_label(entity_type)
         async with self.driver.session() as session:
             # build match clause
-            props_str = " AND ".join([f"e.{k} = ${entity_type}_{k}" for k in properties])
+            props_str = " AND ".join([f"e.{k} = ${k}" for k in properties])
             
             # query to find related entities
             query = f"""
@@ -152,11 +153,15 @@ class AsyncKnowledgeGraphAgent:
         # Initialize LLM if not provided
         self.llm = llm or ChatOpenAI(temperature=0)
         
-        # Create tools for the agent
-        self.tools = self._create_tools()
-        
-        # Create the agent executor
-        self.agent = self._create_agent()
+        # Initialize tools and agent as None - will create them asynchronously
+        self.tools = None
+        self.agent = None
+    
+    async def initialize(self):
+        """Initialize the agent asynchronously"""
+        self.tools = await self._create_tools()
+        self.agent = await self._create_agent()
+        return self
     
     async def _create_tools(self):
         """Create tools for the KG Agent to use"""
@@ -197,10 +202,14 @@ class AsyncKnowledgeGraphAgent:
         ]
         return tools
     
-    def _create_agent(self):
+    async def _create_agent(self):
         """Create the agent executor"""
         from langchain.agents import create_openai_functions_agent
         from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+        
+        # Make sure tools are created
+        if self.tools is None:
+            self.tools = await self._create_tools()
         
         system_message = """You are Dela's Knowledge Graph Agent that automatically builds and maintains a knowledge graph.
         
@@ -246,41 +255,41 @@ class AsyncKnowledgeGraphAgent:
 
         user_prompt = """Extract entities and relationships from this task for Dela's workflow automation:
 
-        Task: {json.dumps(task, indent=2)}
+        Task: %s
 
         Return JSON in this exact format:
-        {{
+        {
             "entities": [
-                {{
+                {
                     "type": "entity_type",
-                    "properties": {{
+                    "properties": {
                         "name": "entity_name",
                         "category": "workflow_category",
                         "frequency": "how_often_used",
                         "automation_potential": "high/medium/low"
-                    }}
-                }}
+                    }
+                }
             ],
             "relationships": [
-                {{
+                {
                     "from_type": "entity_type1",
-                    "from_props": {{"name": "entity_name1"}},
+                    "from_props": {"name": "entity_name1"},
                     "rel_type": "RELATIONSHIP_TYPE",
                     "to_type": "entity_type2",
-                    "to_props": {{"name": "entity_name2"}},
-                    "rel_props": {{
+                    "to_props": {"name": "entity_name2"},
+                    "rel_props": {
                         "sequence_order": "step_number",
                         "conditions": "when_this_happens",
                         "automation_ready": "true/false"
-                    }}
-                }}
+                    }
+                }
             ]
-        }}"""
+        }"""
 
         # create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt.format()),
-            HumanMessage(content=user_prompt.format(task=json.dumps(task, indent=2)))
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt % json.dumps(task, indent=2))
         ]
         
         response = await self.llm.ainvoke(messages)
@@ -294,50 +303,72 @@ class AsyncKnowledgeGraphAgent:
             # fallback if JSON parsing fails
             return {"entities": [], "relationships": []}
     
-    async def process_task(self, task: Dict[str, Any]):
-        """Process a task to extract entities and relationships for the knowledge graph"""
-        # extract entities and relationships
-        if not task:
-            raise ValueError("Task cannot be empty")
+    async def process_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process a task to update the knowledge graph.
         
-        errors = []
-        
-        # Extract entities and relationships
-        extraction = await self.extract_entities_from_task(task)
-        
-        # Create entities
-        created_entities = []
-        for entity in extraction.get("entities", []):
-            try:
-                # Validate entity structure
-                if "type" not in entity or "properties" not in entity:
-                    errors.append(f"Invalid entity structure: {entity}")
-                    continue
+        Args:
+            task_data: Dictionary containing task data
+            
+        Returns:
+            Dictionary containing task results
+        """
+        try:
+            # Extract email interaction data
+            email_interaction = task_data.get("email_interaction", {})
+            kg_data = task_data.get("kg_data", {})
+            
+            # Create entities
+            created_entities = []
+            for entity in kg_data.get("entities", []):
+                try:
+                    # Validate entity structure
+                    if "type" not in entity or "properties" not in entity:
+                        continue
+                        
+                    result = await self.kg.create_entity(entity["type"], entity["properties"])
+                    created_entities.append(result)
+                except Exception as e:
+                    logger.error(f"Error creating entity {entity}: {str(e)}")
+            
+            # Create relationships
+            created_relationships = []
+            for rel in kg_data.get("relationships", []):
+                try:
+                    # Map the relationship data structure to match method parameters
+                    from_type = rel.get("from_type")
+                    from_props = rel.get("from_properties", {})
+                    rel_type = rel.get("type")
+                    to_type = rel.get("to_type")
+                    to_props = rel.get("to_properties", {})
+                    rel_props = rel.get("properties", {})
                     
-                result = await self.kg.create_entity(entity["type"], entity["properties"])
-                created_entities.append(result)
-            except Exception as e:
-                errors.append(f"Error creating entity {entity}: {str(e)}")
-        
-        # create relationships
-        created_relationships = []
-        for rel in extraction.get("relationships", []):
-            try:
-                result = await self.kg.create_relationship(
-                    rel["from_type"], rel["from_props"],
-                    rel["rel_type"],
-                    rel["to_type"], rel["to_props"],
-                    rel.get("rel_props")
-                )
-                created_relationships.append(result)
-            except Exception as e:
-                errors.append(f"Error creating relationship {rel}: {str(e)}")
-        
-        return {
-            "created_entities": created_entities,
-            "created_relationships": created_relationships,
-            "errors": errors
-        }
+                    result = await self.kg.create_relationship(
+                        from_type, from_props,
+                        rel_type,
+                        to_type, to_props,
+                        rel_props if rel_props else None
+                    )
+                    created_relationships.append(result)
+                except Exception as e:
+                    logger.error(f"Error creating relationship {rel}: {str(e)}")
+            
+            # Record task completion
+            result = {
+                "success": True,
+                "message": "Knowledge graph updated successfully",
+                "created_entities": created_entities,
+                "created_relationships": created_relationships
+            }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error processing knowledge graph task: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"Error updating knowledge graph: {str(e)}"
+            }
     
     async def learn_from_tasks(self, tasks: List[Dict[str, Any]]):
         """Learn from a batch of tasks"""

@@ -24,11 +24,12 @@ class GmailMonitor:
         self.password = password or os.getenv("GMAIL_PASSWORD")
         self.imap_server = "imap.gmail.com"
         self.processed_emails: Set[str] = set()  # track processed email IDs
-
+        self.mail = None  # explicit connection state
+        self._running = False
 
     async def connect(self) -> None:
         """Asynchronous connection to Gmail IMAP server"""
-        if hasattr(self, 'mail'):
+        if self.mail is not None:
             raise ValueError("Already connected to IMAP server")
         else:
             self.mail = await asyncio.to_thread(self._connect_sync)
@@ -41,8 +42,9 @@ class GmailMonitor:
 
     async def disconnect(self) -> None:
         """Disconnect from the IMAP server"""
-        if hasattr(self, 'mail'):
+        if self.mail is not None:
             await asyncio.to_thread(self.mail.logout)
+            self.mail = None
         else:
             raise ValueError("Not connected to IMAP server")
     
@@ -65,7 +67,7 @@ class GmailMonitor:
         emails = []
         for email_id in email_ids:
             # skip already processed emails
-            if email_id in self.processed_emails:
+            if email_id.decode() in self.processed_emails:
                 continue
             
             email_data = await self._fetch_email(email_id)
@@ -99,6 +101,7 @@ class GmailMonitor:
             try:
                 date = email.utils.parsedate_to_datetime(date_str)
             except Exception as e:
+                logger.warning(f"Failed to parse date '{date_str}': {e}")
                 date = datetime.now()
 
             # extract the body
@@ -253,10 +256,15 @@ class GmailMonitor:
             interval: Check interval in seconds
             folder: Email folder to monitor
         """
-        while True:
+        self._running = True
+        await self.connect()
+
+        while self._running:
+            if not self._running:
+                break
             try:
                 # connect to Gmail
-                await self.connect()
+                # await self.connect()
                 
                 # fetch new emails
                 emails = await self.fetch_emails(folder=folder)
@@ -269,10 +277,23 @@ class GmailMonitor:
                     await callback(invoice_emails)
                 
                 # disconnect
-                await self.disconnect()
+                # await self.disconnect()
                 
             except Exception as e:
                 logger.error(f"Error monitoring inbox: {e}", exc_info=True)
+                # reconnect on error
+                try:
+                    await self.disconnect()
+                    await self.connect()
+                except Exception as e:
+                    logger.error(f"Error reconnecting to Gmail: {e}", exc_info=True)
             
             # wait for the next check
             await asyncio.sleep(interval)
+        
+        # disconnect
+        await self.disconnect()
+    
+    async def stop(self) -> None:
+        """Stop the monitor"""
+        self._running = False

@@ -114,66 +114,43 @@ class Analyser:
 Focus on identifying:
 - Primary intent of the email (request, information, follow-up, etc.)
 - Key entities mentioned (people, organizations, products, etc.)
-- Any action items or requests
-- Priority level (high, medium, low)
-- Category (invoice, meeting, task, etc.)
-- Sentiment (positive, negative, neutral)
-
-If the email contains an invoice or payment request, extract:
-- Invoice number
-- Amount
-- Due date
-- Vendor/supplier name
-- Payment method requested (if any)
+- Important dates, amounts, or references
+- Sentiment and urgency
+- Whether it contains an invoice or payment request
 
 Always return valid JSON only, no additional text or explanations."""
 
-        user_prompt = f"""Analyze this email and extract structured information:
+        user_prompt = """Analyze this email and extract structured information:
 
-From: {email_data['from']}
-To: {email_data['to']}
-Subject: {email_data['subject']}
-Date: {email_data['date']}
-
-Content:
-{email_data['content']}
+Email Data: %s
 
 Return a JSON object with the following structure:
-{{
+{
     "intent": "string",
     "category": "string",
-    "priority": "string",
+    "entities": {
+        "people": ["string"],
+        "organizations": ["string"],
+        "products": ["string"],
+        "dates": ["string"],
+        "amounts": ["string"]
+    },
     "sentiment": "string",
-    "entities": [
-        {{
-            "type": "string",
-            "name": "string",
-            "relevance": "string"
-        }}
-    ],
-    "action_items": [
-        {{
-            "description": "string",
-            "due_date": "string or null",
-            "assignee": "string or null"
-        }}
-    ],
-    "invoice_data": {{
-        "is_invoice": true/false,
-        "invoice_number": "string or null",
-        "amount": "string or null",
-        "currency": "string or null",
-        "due_date": "string or null",
-        "vendor": "string or null",
-        "payment_method": "string or null"
-    }},
+    "urgency": "string",
+    "is_invoice": "boolean",
+    "invoice_data": {
+        "amount": "number",
+        "due_date": "string",
+        "invoice_number": "string",
+        "vendor": "string"
+    },
     "summary": "string"
-}}"""
+}"""
 
         # create messages for the LLM   
         messages = [
-            SystemMessage(content=system_prompt.format()),
-            HumanMessage(content=user_prompt.format(email_json=json.dumps(email_data, indent=2)))
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt % json.dumps(email_data, indent=2))
         ]
         
         # get response from LLM
@@ -199,11 +176,11 @@ Return a JSON object with the following structure:
             return {
                 "intent": "unknown",
                 "category": "unknown",
-                "priority": "medium",
+                "entities": {"people": [], "organizations": [], "products": [], "dates": [], "amounts": []},
                 "sentiment": "neutral",
-                "entities": [],
-                "action_items": [],
-                "invoice_data": {"is_invoice": False},
+                "urgency": "medium",
+                "is_invoice": False,
+                "invoice_data": {"amount": None, "due_date": None, "invoice_number": None, "vendor": None},
                 "summary": "Failed to analyze email content"
             }
     
@@ -265,44 +242,44 @@ Extract relationships that show workflow dependencies:
 
 Always return valid JSON only, no additional text or explanations."""
 
-        user_prompt = f"""Extract entities and relationships from this email data for Dela's knowledge graph:
+        user_prompt = """Extract entities and relationships from this email data for Dela's knowledge graph:
 
-Email Data: {json.dumps(email_data, indent=2)}
+Email Data: %s
 
 Return a JSON object with the following structure:
-{{
+{
     "entities": [
-        {{
+        {
             "type": "string",
-            "properties": {{
+            "properties": {
                 "name": "string",
                 "id": "string",
                 "other_properties": "as needed"
-            }}
-        }}
+            }
+        }
     ],
     "relationships": [
-        {{
+        {
             "from_type": "string",
-            "from_properties": {{
+            "from_properties": {
                 "identifying_property": "value"
-            }},
+            },
             "to_type": "string",
-            "to_properties": {{
+            "to_properties": {
                 "identifying_property": "value"
-            }},
+            },
             "type": "string",
-            "properties": {{
+            "properties": {
                 "optional_properties": "as needed"
-            }}
-        }}
+            }
+        }
     ]
-}}"""
+}"""
 
         # create messages for the LLM
         messages = [
-            SystemMessage(content=system_prompt.format()),
-            HumanMessage(content=user_prompt.format(email_json=json.dumps(email_data, indent=2)))
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt % json.dumps(email_data, indent=2))
         ]
         
         # get response from LLM
